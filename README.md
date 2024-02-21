@@ -44,7 +44,7 @@ Before you can use this workflow, you need to have the following:
 Setting Up Your Environment
 Clone the repository:
 
-Copy code
+
 ```
 git clone https://github.com/aws-samples/aws-lake-formation-time-based-temp-access.git
 ```
@@ -104,7 +104,7 @@ Best Practices and Standards
 
 ```
 
-#### SAM Template-Automated Deployment 
+#### AWS SAM Template-Automated Deployment 
 
 To streamline the AWS SAM (Serverless Application Model) template for deploying two AWS Lambda functions with specific roles and permissions for managing AWS Lake Formation access, along with the necessary permissions for AWSEventBridge to invoke one of the AWS Lambda functions, here's a concise explanation followed by a two-step execution guide:
 
