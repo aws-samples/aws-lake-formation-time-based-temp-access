@@ -20,6 +20,8 @@ Lambda Function (Grant Access): A AWS Lambda function (AccessGrant) is invoked w
 Lambda Function (Revoke Access): The RevokeAccess function is invoked by Amazon EventBridge at the scheduled time. This function performs the following task:
 
 **Revoke Access:** It revokes the previously granted access from the principal, ensuring that the temporary access permission is securely and automatically removed.
+
+
 ![Architecture](https://github.com/aws-samples/aws-lake-formation-time-based-temp-access/blob/main/Architecture.jpg)
 ***
 
