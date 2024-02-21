@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: An AWS SAM template for deploying Lambda functions with specific roles and permissions.
+
+Globals:
+  Function:
+    Timeout: 10
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lakeformation:GetDataAccess
+                  - lakeformation:GrantPermissions
+                  - lakeformation:RevokePermissions
+                  - lakeformation:ListPermissions
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:DeleteRule
+                  - events:RemoveTargets
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/*'
+
+  LambdaRevokeAccess:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWS-Lambda-LF-revoke-access
+      Handler: AWS-Lambda-LF-revoke-access.lambda_handler
+      Runtime: python3.8
+      CodeUri: .
+      Description: "Lambda function to revoke Lake Formation access."
+      MemorySize: 128
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  LambdaAccessGrant:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AWS-LambdaFn-LF-access-grant
+      Handler: AWS-LambdaFn-LF-access-grant.lambda_handler
+      Runtime: python3.8
+      CodeUri: .
+      Description: "Lambda function to grant Lake Formation access."
+      MemorySize: 128
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        EventBridgeEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - "aws.events"
+            EventBusName: default
+
+  LambdaInvokePermissionForEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaAccessGrant.Arn
+      Principal: events.amazonaws.com
+      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/*'
