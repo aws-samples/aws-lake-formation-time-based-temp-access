@@ -141,17 +141,7 @@ Best Practices and Standards
 
 #### AWS SAM Template-Automated Deployment 
 
-To streamline the AWS SAM (Serverless Application Model) template for deploying two AWS Lambda functions with specific roles and permissions for managing AWS Lake Formation access, along with the necessary permissions for AWSEventBridge to invoke one of the AWS Lambda functions, here's a concise explanation followed by a two-step execution guide:
-
-#### Template Overview
-This SAM template defines:
-
-A LambdaExecutionRole with policies for AWS Lake Formation access management and AWS CloudWatch Logs creation, alongside permissions to manage EventBridge rules.
-
-* Two Lambda functions:
-LambdaRevokeAccess: Revokes Lake Formation access.
-LambdaAccessGrant: Grants Lake Formation access and is configured with an Amazon EventBridge rule trigger.
-LambdaInvokePermissionForEventBridge: Grants EventBridge permission to invoke the LambdaAccessGrant function.
+The AWS SAM template is engineered to automate the provisioning of a secure access management system for AWS Lake Formation. It establishes a LambdaExecutionRole with the necessary permissions to manage AWS Lake Formation permissions, AWS CloudWatch Logs, and Amazon EventBridge rules. The template deploys two AWS Lambda functions: LambdaRevokeAccess for revoking access permissions, and LambdaAccessGrant for granting permissions, which is also equipped with an AWS API Gateway endpoint for invocation. It includes a Amazon DynamoDB table, LakeFormationAccessGrants, to log access details, and an AWS EventBridge rule, RevokeAccessSchedule, set to trigger the LambdaRevokeAccess function on an hourly basis. This configuration ensures an automated, scheduled check for permission revocation, maintaining tight security controls around data access.
 
 #### Execution Steps
 
