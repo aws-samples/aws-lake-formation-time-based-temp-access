@@ -1,25 +1,45 @@
 <h1><p><u>AWS-Lake-Formation-Time-based-Temp-Access</u></p></h1>
 
-### Introduction
-This aws-samples repository contains a workflow that automates time-based access control for AWS Lake Formation resources using AWS Lambda and Amazon EventBridge. This solution grants temporary access to AWS Lake Formation tables and automatically revokes it after a specified duration, enhancing security and compliance by ensuring that access is only available when necessary.
+### Introduction:
+The architecture diagram presents a workflow for managing time-based temporary access to AWS Lake Formation (LF) resources using AWS Lambda and Amazon DynamoDB, with the scheduling capabilities of Amazon EventBridge. This automated solution is designed to grant temporary access permissions and ensure that they are revoked after a specified duration, enhancing security and adherence to the principle of least privilege.
+
 
 ### Workflow Architecture
-This architecture leverages AWS Lambda and Amazon EventBridge to provide a secure, automated mechanism for granting and revoking access to AWS Lake Formation resources based on predefined durations. The system operates in two main phases: access grant and access revocation, facilitated by two distinct Lambda functions.
+**API Gateway (Optional)**: Serves as an entry point for initiating the workflow. It can expose an HTTP endpoint for users or services to request temporary access to Lake Formation resources.
+
+**AWS Lambda (Grant Access)**: This Lambda function is triggered by the API Gateway to grant temporary access to Lake Formation resources. It uses the AWS SDK (boto3) to interact with AWS Lake Formation.
+
+**Amazon DynamoDB**: Stores records of all granted accesses, including details like the principal, resource, and access duration.
+
+**AWS Lambda (Scan & Revoke Access)**: Periodically triggered by EventBridge, this function scans the DynamoDB table for access records that have expired and revokes those accesses.
+
+**Amazon EventBridge:** Schedules and triggers the Scan & Revoke Lambda function based on the duration specified in the access grant records.
+
 
 **Phase 1: Access Grant**
-Trigger: The process begins when a user provides input, specifying the principal (e.g., an AWS IAM role or user) and the duration for which access is required.
-Lambda Function (Grant Access): A AWS Lambda function (AccessGrant) is invoked with the user's input. This function performs the following tasks:
+1. **Grant Access**:
+* A user or service makes a request for temporary access to a AWS Lake Formation resource, optionally via an AWS API Gateway endpoint.
+The request triggers the Grant Access AWS Lambda function, which validates the request and uses boto3 to call AWS Lake Formation's GrantPermissions API, granting the specified permissions.
+The AWS Lambda function logs the access grant details, including the duration of access, in a DynamoDB table, and marks the grant as active.
 
-**Grant Access:** It grants the specified principal access to the desired AWS Lake Formation resources using AWS Lake Formation's GrantPermissions API.
+2. **Log Access Grants**:
 
-**Schedule Revocation:** It then creates a scheduled event in Amazon EventBridge, set to trigger after the specified duration. This scheduling is achieved by dynamically setting the cron expression based on the duration for which access was granted.
+* The details of the access grant, such as principal ID, resource information, and duration, are stored in a Amazon DynamoDB table with a unique access ID and a timestamp.
+An IsActive attribute is set to True, indicating that the grant is currently in effect.
 
-**Phase 2: Access Revocation**
+3. **Scheduled Revocation Check**:
 
-**Scheduled Event:** Upon reaching the specified duration, Amazon EventBridge triggers a second Lambda function (RevokeAccess) according to the schedule set during the access grant phase.
-Lambda Function (Revoke Access): The RevokeAccess function is invoked by Amazon EventBridge at the scheduled time. This function performs the following task:
+* Amazon EventBridge is configured with a rule to trigger the Scan & Revoke AWS Lambda function at regular intervals.
+Upon invocation, the AWS Lambda function scans the Amazon DynamoDB table for records where the current time exceeds the grant timestamp plus the duration, indicating that the access period has expired.
 
-**Revoke Access:** It revokes the previously granted access from the principal, ensuring that the temporary access permission is securely and automatically removed.
+4. **Revoke Access:**
+For each expired grant, the Scan & Revoke Lambda function calls AWS Lake Formation's RevokePermissions API to revoke the access.
+The function updates the Amazon DynamoDB table, setting the IsActive attribute to False for the revoked grant to reflect that the access is no longer active.
+
+**Completion:**
+After processing, the Scan & Revoke AWS Lambda function concludes its execution, and the system awaits the next scheduled Amazon EventBridge trigger to repeat the process if necessary.
+Optionally, if any steps fail or exceptions occur, appropriate error logging is provided for monitoring and alerting purposes.
+This architecture ensures that temporary access to sensitive data is automatically managed and that permissions are revoked in a timely manner, reducing the risk of unauthorized access and maintaining a robust security posture.
 
 
 ![Architecture](https://github.com/aws-samples/aws-lake-formation-time-based-temp-access/blob/main/Architecture.jpg)
@@ -34,11 +54,11 @@ A data analytics firm needs to grant a contractor temporary access to a specific
 ### Prerequisites
 Before you can use this workflow, you need to have the following:
 
-* An AWS account with permissions to manage AWS Lambda, AWS Lake Formation, and Amazon EventBridge.
+* An AWS account with permissions to manage AWS Lambda, AWS Lake Formation, Amazon DynamoDB and Amazon EventBridge.
 * The AWS CLI installed and configured.
 * Python 3.8 or higher.
-* Basic familiarity with AWS services, particularly AWS Lambda, AWS Lake Formation, and Amazon EventBridge.
-* Ensure the AWS Lambda for revokeLFAccess has Resource-based policy(under permission) statements has event.amazonaws.com and lambda:InvokeFunction
+* Basic familiarity with AWS services, particularly AWS Lambda, AWS Lake Formation,Amazon DynamoDB and Amazon EventBridge.
+* Ensure the AWS Lambda for Scan and revoke has Resource-based policy(under permission) statements has event.amazonaws.com and lambda:InvokeFunction
 
 ### Getting Started
 Setting Up Your Environment
@@ -98,9 +118,24 @@ Best Practices and Standards
                 "events:ListTargetsByRule"
             ],
             "Resource": "arn:aws:events:<region>:<account-id>:rule/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:UpdateItem",
+                "dynamodb:PutItem"
+                // Include other DynamoDB actions as needed by your Lambda function
+            ],
+            "Resource": [
+                "arn:aws:dynamodb:<region>:<account-id>:table/tablename"
+                // Replace with the ARN of the specific Amazon DynamoDB table(s) your Lambda will interact with
+            ]
         }
     ]
 }
+
 
 ```
 
