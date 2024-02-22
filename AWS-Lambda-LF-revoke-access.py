@@ -1,72 +1,121 @@
 import boto3
+import uuid
+import time
 import logging
+import json
 
-# Set up logging
+# Initialize logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-def revoke_lake_formation_permissions(principal, database_name, table_name, permissions):
-    """
-    Revokes permissions for a principal on a specified Lake Formation resource.
+# Initialize AWS SDK clients
+dynamodb = boto3.resource('dynamodb')
+lakeformation = boto3.client('lakeformation')
 
-    Parameters:
-    - principal: A dictionary identifying the principal (e.g., IAM role or user) from whom to revoke permissions.
-    - database_name: The name of the database containing the resource.
-    - table_name: The name of the table resource.
-    - permissions: A list of permissions to revoke.
+def grant_access_to_lakeformation(principal, resource, permissions):
     """
-    lake_formation_client = boto3.client('lakeformation')
-    resource = {
-        'Table': {
-            'DatabaseName': database_name,
-            'Name': table_name,
-            # 'CatalogId': 'ACCOUNT_ID'  # Uncomment and specify if necessary
-        }
-    }
-    print(resource)
+    Grants access to a Lake Formation resource.
+    """
     try:
-        response = lake_formation_client.revoke_permissions(
-            Principal=principal,
+        response = lakeformation.grant_permissions(
+            Principal={'DataLakePrincipalIdentifier': principal},
             Resource=resource,
             Permissions=permissions,
-            # PermissionsWithGrantOption=['ALL']  # Uncomment and specify if necessary
         )
-        logger.info(f"Permissions revoked successfully: {response}")
-        return {
-            'statusCode': 200,
-            'body': 'Access revoked successfully'
-        }
+        logger.info("Lake Formation permission granted: %s", response)
+        return True
     except Exception as e:
-        logger.error(f"Error revoking AWS Lake Formation permissions: {e}")
-        return {
-            'statusCode': 500,
-            'body': 'Failed to revoke access'
-        }
+        logger.error("Error granting Lake Formation permission: %s", e, exc_info=True)
+        return False
+
+def log_access_grant_to_dynamodb(access_id, principal, resource_info, duration_hours):
+    """
+    Logs the access grant details to a DynamoDB table.
+    """
+    table_name = 'LakeFormationAccessGrants'
+    current_timestamp = int(time.time())
+    
+    try:
+        table = dynamodb.Table(table_name)
+        response = table.put_item(
+            Item={
+                'AccessID': access_id,
+                'PrincipalID': principal,
+                'ResourceInfo': json.dumps(resource_info),  # Ensure this is a valid JSON string
+                'GrantTimestamp': current_timestamp,
+                'DurationHours': duration_hours,
+                'IsActive': True  # Mark the grant as active initially
+            }
+        )
+        logger.info("Access grant logged to DynamoDB: %s", response)
+    except Exception as e:
+        logger.error("Error logging access grant to DynamoDB: %s", e, exc_info=True)
+
+def update_access_grant_status_in_dynamodb(access_id, is_active):
+    """
+    Updates the active status of an access grant in DynamoDB.
+    """
+    table_name = 'LakeFormationAccessGrants'
+    table = dynamodb.Table(table_name)
+    
+    try:
+        response = table.update_item(
+            Key={'AccessID': access_id},
+            UpdateExpression="set IsActive = :val",
+            ExpressionAttributeValues={':val': is_active}
+        )
+        logger.info(f"Access grant status updated in DynamoDB for {access_id}: {response}")
+    except Exception as e:
+        logger.error(f"Error updating access grant status in DynamoDB for {access_id}: {e}", exc_info=True)
+
+def check_and_revoke_access():
+    """
+    Checks for access grants that have expired and revokes them.
+    """
+    table = dynamodb.Table('LakeFormationAccessGrants')
+    current_time = int(time.time())
+    
+    response = table.scan()
+    
+    found_eligible_for_revocation = False
+    
+    for item in response['Items']:
+        grant_time = item['GrantTimestamp']
+        duration_hours = item['DurationHours']
+        
+        if current_time - grant_time > duration_hours * 3600 and item['IsActive']:
+            found_eligible_for_revocation = True
+            principal = item['PrincipalID']
+            resource_info = json.loads(item['ResourceInfo'])
+            
+            if revoke_access_in_lakeformation(principal, resource_info):
+                update_access_grant_status_in_dynamodb(item['AccessID'], False)
+    
+    if not found_eligible_for_revocation:
+        logger.info("No eligible access revoke records found in DynamoDB table.")
+
+def revoke_access_in_lakeformation(principal, resource_info):
+    """
+    Revokes access to a Lake Formation resource for a given principal.
+    """
+    # Assuming resource_info is already in the correct format for the Lake Formation API call
+    try:
+        lakeformation.revoke_permissions(
+            Principal={'DataLakePrincipalIdentifier': principal},
+            Resource=resource_info,
+            Permissions=['SELECT'],  # Adjust as needed
+        )
+        logger.info(f"Successfully revoked Lake Formation permissions for {principal}")
+        return True
+    except Exception as e:
+        logger.error(f"Error revoking Lake Formation permissions for {principal}: {e}", exc_info=True)
+        return False
+
+
 
 def lambda_handler(event, context):
-    """
-    Handles the invocation of the Lake Formation permissions revocation.
-
-    Expects event input from eventbridge
-    with 
-    principal- -expecting str 
-    database name - expecting str
-    table name-expecting str
-    permissions- expecting a python list
-    """
-    # Extracting inputs from the event object passed by the eventbridge from LF-grant AWS Lambda
-    in_principal = event.get('principal', {})
-    principal = {'DataLakePrincipalIdentifier': in_principal}
-    database_name = event.get('database_name', '')
-    table_name = event.get('table_name', '')
-    permissions = event.get('permissions', [])
-    
-  
-    if not all([principal, database_name, table_name, permissions]):
-        return {
-            'statusCode': 400,
-            'body': 'Missing required parameters'
-        }
-
-    return revoke_lake_formation_permissions(principal, database_name, table_name, permissions)
-
+    check_and_revoke_access()
+    return {
+        'statusCode': 200,
+        'body': 'Access revocation process completed.'
+    }
