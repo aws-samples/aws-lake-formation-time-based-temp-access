@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: An AWS SAM template for deploying Lambda functions with specific roles and permissions.
+Description: An AWS SAM template for deploying Lambda functions with specific roles and permissions, a DynamoDB table for logging, and EventBridge rules for scheduled tasks.
 
 Globals:
   Function:
@@ -18,7 +18,7 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: LambdaExecutionPolicy
+        - PolicyName: LambdaLakeFormationPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -41,12 +41,30 @@ Resources:
                   - events:DescribeRule
                   - events:ListTargetsByRule
                 Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/LakeFormationAccessGrants'
+
+  LakeFormationAccessGrantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: LakeFormationAccessGrants
+      AttributeDefinitions:
+        - AttributeName: AccessID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: AccessID
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
 
   LambdaRevokeAccess:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: AWS-Lambda-LF-revoke-access
-      Handler: AWS-Lambda-LF-revoke-access.lambda_handler
+      Handler: AWS-Lambda-LF-revoke-access-new.lambda_handler
       Runtime: python3.8
       CodeUri: .
       Description: "Lambda function to revoke Lake Formation access."
@@ -57,25 +75,33 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: AWS-LambdaFn-LF-access-grant
-      Handler: AWS-LambdaFn-LF-access-grant.lambda_handler
+      Handler: AWS-LambdaFn-LF-access-grant-new.lambda_handler
       Runtime: python3.8
       CodeUri: .
       Description: "Lambda function to grant Lake Formation access."
       MemorySize: 128
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
-        EventBridgeEvent:
-          Type: EventBridgeRule
+        ApiEndpoint:
+          Type: Api
           Properties:
-            Pattern:
-              source:
-                - "aws.events"
-            EventBusName: default
+            Path: /grantaccess
+            Method: post
 
   LambdaInvokePermissionForEventBridge:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !GetAtt LambdaAccessGrant.Arn
+      FunctionName: !GetAtt LambdaRevokeAccess.Arn
       Principal: events.amazonaws.com
-      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/*'
+      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/RevokeAccessRule'
+
+  RevokeAccessSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Scheduled Rule to invoke the revoke access Lambda function"
+      ScheduleExpression: "rate(1 hour)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LambdaRevokeAccess.Arn
+          Id: "RevokeAccessTarget"
